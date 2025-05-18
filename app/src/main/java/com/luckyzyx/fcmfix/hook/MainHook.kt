@@ -30,7 +30,7 @@ object MainHook : IYukiHookXposedInit {
         YukiHookAPI.configs {
             debugLog {
                 tag = "FCMFix"
-                isEnable = true
+                isEnable = false
                 elements(TAG, PRIORITY, PACKAGE_NAME, USER_ID)
             }
             isDebug = false
