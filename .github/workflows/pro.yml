@@ -1,0 +1,53 @@
+name: Build CI123
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build with Gradle
+        run: ./gradlew buildCI
+
+      - name: Setup build tool version variable
+        shell: bash
+        run: |
+          # 关键修复：自然排序获取最新构建工具
+          BUILD_TOOL_VERSION=$(ls /usr/local/lib/android/sdk/build-tools/ | sort -V | tail -n 1)
+          echo "BUILD_TOOL_VERSION=$BUILD_TOOL_VERSION" >> $GITHUB_ENV
+          echo "Latest build tool version: $BUILD_TOOL_VERSION"
+
+      - name: Sign APK
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: ${{ github.workspace }}/app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.SIGNINGKEYBASE64 }}
+          alias: ${{ secrets.ALIAS }}            # 确保非空
+          keyStorePassword: ${{ secrets.KEYSTOREPASSWORD }} # 确保非空
+          keyPassword: ${{ secrets.KEYPASSWORD }}
+        env:
+          BUILD_TOOLS_VERSION: ${{ env.BUILD_TOOL_VERSION }}
+
+      - name: Upload CI
+        uses: actions/upload-artifact@v4
+        with:
+          path: |
+            ${{ github.workspace }}/app/build/outputs/apk/release/*signed.apk
+            ${{ github.workspace }}/app/build/outputs/apk/release/*.json
+          if-no-files-found: error
