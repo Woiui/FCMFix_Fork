@@ -1,4 +1,4 @@
-name: Build CI with Debug Signing
+name: Build CI
 
 on:
   push:
@@ -13,7 +13,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup JDK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # 显式指定较新的构建工具版本
+          build-tools-version: "34.0.0"  # 或 "33.0.0"
+          # 添加 ndk-bundle 以防需要
+          ndk-version: "25.2.9519653"
+
+      - name: setup JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -22,13 +30,8 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # 修改构建命令，确保生成未签名APK
       - name: Build with Gradle
         run: ./gradlew assembleRelease -x signRelease
-        
-      # 列出构建产物以验证
-      - name: List build outputs
-        run: ls -la ${{ github.workspace }}/app/build/outputs/apk/release
 
       # 确保 .android 目录存在
       - name: Create Android directory
@@ -46,47 +49,47 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US" \
               -validity 3650 \
               -keyalg RSA \
-              -keysize 2048
+              -keysize 2048 \
+              -storetype JKS  # 明确指定 JKS 格式
           fi
           # 列出密钥库信息（验证）
           keytool -list -v -keystore $HOME/.android/debug.keystore -storepass android
 
-      # 签名 APK - 改进的文件查找逻辑
+      # 使用最新构建工具签名 APK
       - name: Sign APK with debug key
         run: |
-          # 查找所有APK文件（不再限于"unsigned"）
-          APK_FILES=($(find ${{ github.workspace }}/app/build/outputs/apk/release -name "*.apk"))
+          # 获取最新的构建工具版本
+          BUILD_TOOLS_PATH=$(find $ANDROID_HOME/build-tools -maxdepth 1 -type d | sort -V | tail -n1)
+          echo "Using build tools: $BUILD_TOOLS_PATH"
           
-          if [ ${#APK_FILES[@]} -eq 0 ]; then
-            echo "Error: No APK files found in release directory!"
+          # 查找 APK 文件
+          RELEASE_DIR="${{ github.workspace }}/app/build/outputs/apk/release"
+          APK_FILE=$(find "$RELEASE_DIR" -name "*.apk" ! -name "*unaligned*" ! -name "*signed*" -print -quit)
+          
+          if [ -z "$APK_FILE" ]; then
+            echo "Error: No APK file found in $RELEASE_DIR"
+            ls -la "$RELEASE_DIR"
             exit 1
           fi
           
-          # 选择第一个找到的APK文件进行签名
-          UNSIGNED_APK=${APK_FILES[0]}
-          echo "Found APK to sign: $UNSIGNED_APK"
+          echo "Found APK to sign: $APK_FILE"
+          SIGNED_APK="${APK_FILE%.apk}-signed.apk"
           
-          # 设置输出路径
-          SIGNED_APK="${UNSIGNED_APK%.apk}-debug-signed.apk"
-          
-          # 使用 jarsigner 签名
-          jarsigner -verbose \
-            -keystore $HOME/.android/debug.keystore \
-            -storepass android \
-            -keypass android \
-            -signedjar "$SIGNED_APK" \
-            "$UNSIGNED_APK" \
-            androiddebugkey
+          # 使用 apksigner 签名
+          "$BUILD_TOOLS_PATH/apksigner" sign \
+            --ks $HOME/.android/debug.keystore \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out "$SIGNED_APK" \
+            "$APK_FILE"
           
           echo "Signed APK created at: $SIGNED_APK"
           
           # 验证签名
-          jarsigner -verify -verbose "$SIGNED_APK"
+          "$BUILD_TOOLS_PATH/apksigner" verify --verbose "$SIGNED_APK"
 
-      # 上传签名后的 APK
       - name: Upload Signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: debug-signed-apk
-          path: ${{ github.workspace }}/app/build/outputs/apk/release/*debug-signed.apk
+          path: ${{ github.workspace }}/app/build/outputs/apk/release/*signed.apk
           if-no-files-found: error
