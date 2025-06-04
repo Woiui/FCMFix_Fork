@@ -22,8 +22,13 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      # 修改构建命令，确保生成未签名APK
       - name: Build with Gradle
-        run: ./gradlew buildCI
+        run: ./gradlew assembleRelease -x signRelease
+        
+      # 列出构建产物以验证
+      - name: List build outputs
+        run: ls -la ${{ github.workspace }}/app/build/outputs/apk/release
 
       # 确保 .android 目录存在
       - name: Create Android directory
@@ -46,21 +51,23 @@ jobs:
           # 列出密钥库信息（验证）
           keytool -list -v -keystore $HOME/.android/debug.keystore -storepass android
 
-      # 签名 APK
+      # 签名 APK - 改进的文件查找逻辑
       - name: Sign APK with debug key
         run: |
-          # 查找未签名的 APK 文件
-          UNSIGNED_APK=$(find ${{ github.workspace }}/app/build/outputs/apk/release -name "*-unsigned.apk" -print -quit)
+          # 查找所有APK文件（不再限于"unsigned"）
+          APK_FILES=($(find ${{ github.workspace }}/app/build/outputs/apk/release -name "*.apk"))
           
-          if [ -z "$UNSIGNED_APK" ]; then
-            echo "Error: No unsigned APK found!"
+          if [ ${#APK_FILES[@]} -eq 0 ]; then
+            echo "Error: No APK files found in release directory!"
             exit 1
           fi
           
-          echo "Found unsigned APK: $UNSIGNED_APK"
+          # 选择第一个找到的APK文件进行签名
+          UNSIGNED_APK=${APK_FILES[0]}
+          echo "Found APK to sign: $UNSIGNED_APK"
           
           # 设置输出路径
-          SIGNED_APK="${UNSIGNED_APK%-unsigned.apk}-debug-signed.apk"
+          SIGNED_APK="${UNSIGNED_APK%.apk}-debug-signed.apk"
           
           # 使用 jarsigner 签名
           jarsigner -verbose \
